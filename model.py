@@ -6,6 +6,7 @@ import torch.nn as nn
 import torch
 import numpy as np
 import torch.nn.functional as F
+import trimesh
 
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(ROOT_DIR)
@@ -14,56 +15,54 @@ from svh_kinematics.svh_layer.svhhand_layer import SvhHandLayer
 from tool.train_tool import point2point_signed
 
 
+# quat_loss
+def quaternion_loss(y_true, y_pred):
+    dist1 = torch.mean(torch.abs(y_true - y_pred), dim=-1)
+    dist2 = torch.mean(torch.abs(y_true + y_pred), dim=-1)
+    loss = torch.where(dist1 < dist2, dist1, dist2)
+    return torch.mean(loss)
+
+
 class backbone_pointnet2(nn.Module):
-    def __init__(self, config, device='cuda'):
+    def __init__(self, config):
         super(backbone_pointnet2, self).__init__()
         self.config = config
-        self.device = device
 
-        self.sa1 = PointnetSAModule(mlp=[6, 32, 32, 64], npoint=1024, radius=0.1, nsample=32, bn=not True)
-        self.sa2 = PointnetSAModule(mlp=[64, 64, 64, 128], npoint=256, radius=0.2, nsample=64, bn=not True)
-        self.sa3 = PointnetSAModule(mlp=[128, 128, 128, 256], npoint=64, radius=0.4, nsample=128, bn=not True)
-        self.sa4 = PointnetSAModule(mlp=[256, 256, 256, 512], npoint=None, radius=None, nsample=None, bn=not True)
+        self.sa1 = PointnetSAModule(mlp=[6, 64, 64, 128], npoint=512, radius=0.025, nsample=64, bn=True)
+        self.sa2 = PointnetSAModule(mlp=[128, 128, 128, 256], npoint=128, radius=0.05, nsample=64, bn=True)
+        self.sa3 = PointnetSAModule(mlp=[256, 256, 256, 512])
+        # self.sa4 = PointnetSAModule(mlp=[256, 256, 256, 512], npoint=None, radius=None, nsample=None, bn=True)
 
         # fc layer
-        self.fc1 = nn.Linear(512, 256)
-        self.fc2 = nn.Linear(256, 128)
-        self.fc3 = nn.Linear(128, 16)
-        self.bn1 = nn.BatchNorm1d(256)
-        self.bn2 = nn.BatchNorm1d(128)
-        self.drop1 = nn.Dropout(0.5)
-        self.drop2 = nn.Dropout(0.5)
+        self.fc_translation = nn.Linear(512, 3)
+        self.fc_quat = nn.Linear(512, 4)
+        self.fc_joints = nn.Linear(512, 9)
         self.tanh = nn.Tanh()
-        self.joints_mean = torch.tensor([0, 0, 0, 0, 0, 0, 0,
-                                         0.99 / 2, 0.97 / 2, 0.8 / 2, 1.33 / 2, 0.8 / 2, 1.33 / 2, 0.98 / 2, 0.98 / 2,
-                                         0.40 / 2 + 0.18]).to(self.device)
-        self.joints_range = torch.tensor([0.5, 0.5, 0.5, 2, 2, 2, 2,
-                                          0.99, 0.97, 0.8, 1.33, 0.8, 1.33, 0.98, 0.98, 0.40]).to(self.device)
+        self.joints_mean = torch.tensor([0.99 / 2, 0.97 / 2, 0.8 / 2, 1.33 / 2, 0.8 / 2, 1.33 / 2, 0.98 / 2, 0.98 / 2,
+                                         0.40 / 2 + 0.18])
+        self.joints_range = torch.tensor([0.99, 0.97, 0.8, 1.33, 0.8, 1.33, 0.98, 0.98, 0.40])
 
         # svh_hand layer
         self.svh = SvhHandLayer()
 
     def forward(self, xyz, points):
         B = xyz.shape[0]
+        device = xyz.device
         l1_xyz, l1_points = self.sa1(xyz.contiguous(), points)
         l2_xyz, l2_points = self.sa2(l1_xyz, l1_points)
         l3_xyz, l3_points = self.sa3(l2_xyz, l2_points)
-        _, l4_points = self.sa4(l3_xyz, l3_points)
-        feature = l4_points.view(-1, 512)
-        # feature = F.leaky_relu(self.bn1(self.fc1(feature)), negative_slope=0.2)
-        feature_ = F.leaky_relu(self.fc1(feature), negative_slope=0.2)
-        # feature = self.drop1(feature)
-        # feature = F.leaky_relu(self.bn2(self.fc2(feature)), negative_slope=0.2)
-        feature_ = F.leaky_relu(self.fc2(feature_), negative_slope=0.2)
-        # feature = self.drop2(feature)
-        joints_debug = self.tanh(self.fc3(feature_))
-        joints = self.joints_mean + joints_debug * self.joints_range * 0.5
-        # print('joints', joints)
-        pose = torch.from_numpy(np.zeros([B, 4, 4])).float().to(self.device)
-        pose[:, :3, :3] = pytorch3d.transforms.quaternion_to_matrix(joints[:, 3:7])
-        pose[:, :3, 3] = joints[:, :3]
-        # pose[:, 2, 3] -= 0.1
-        theta = joints[:, 7:]
+        feature = l3_points.view(-1, 512)
+
+        hand_translation = self.fc_translation(feature)
+        hand_quat = F.normalize(self.fc_quat(feature))
+        hand_joints = self.tanh(self.fc_joints(feature))
+
+        pose = torch.from_numpy(np.zeros([B, 4, 4])).float().to(device)
+        pose[:, :3, :3] = pytorch3d.transforms.quaternion_to_matrix(hand_quat)
+        pose[:, :3, 3] = hand_translation
+
+        theta = self.joints_mean.to(device) + hand_joints * self.joints_range.to(device) * 0.5
+
         J = torch.cat([(theta[:, 0] - 0.26).view(B, -1),
                        (theta[:, 1] - 0.17).view(B, -1),
                        (1.01511 * theta[:, 1] + 0.35).view(B, -1),
@@ -84,37 +83,69 @@ class backbone_pointnet2(nn.Module):
                        (1.3588 * theta[:, 7] + 0.24).view(B, -1),
                        (1.42307 * theta[:, 7]).view(B, -1)], dim=1)
         vertices, normals = self.svh.get_forward_vertices(pose, theta)
-        return dict(J=J, vertices=vertices, normals=normals, pose=pose, theta=theta, joints=joints, feature=feature, xyz=xyz)
 
-    def get_loss(self, pred, data):
+        return dict(J=J, vertices=vertices, normals=normals, pose=pose, theta=theta, quat=hand_quat)
+        # return dict(J=J, vertices=vertices, normals=normals, pose=pose, theta=theta, joints=joints, feature=feature,
+        #             xyz=xyz)
+
+    def get_loss(self, pred, data, debug_loss=False):
         """
         pred: {J, vertices, normals, quat}
         data: {J, contactmap, points, normals, root_mat}
         """
-        # collision loss of hand and object
-        o2h, h2o, _, _ = point2point_signed(pred['vertices'], data['points'], pred['normals'], data['normals'])
+        bs = pred['vertices'].size()[0]
 
-        w_dist_neg = o2h < 0.0
-        v_dist_neg = torch.logical_and(h2o.abs() < 0.015, h2o < 0.0)
-        loss_collision_h2o = torch.sum(h2o * v_dist_neg)
-        loss_collision_o2h = torch.sum(o2h * w_dist_neg)
+        # collision loss of hand and object
+        o2h_signed, h2o_signed, _, _ = point2point_signed(pred['vertices'], data['points'], pred['normals'], data['normals'])
+
+        o2h_dist_neg = torch.logical_and(o2h_signed.abs() < 0.015, o2h_signed < 0.0)
+        h2o_dist_neg = torch.logical_and(h2o_signed.abs() < 0.015, h2o_signed < 0.0)
+        loss_collision_h2o = torch.sum(h2o_signed * h2o_dist_neg) / bs
+        loss_collision_o2h = torch.sum(o2h_signed * o2h_dist_neg) / bs
+        if debug_loss:
+            selected_idx = np.random.randint(bs)
+            object_points = data['points'].cpu().numpy()[selected_idx]
+            # green for object points
+            object_pc = trimesh.PointCloud(object_points, colors=[0, 255, 0])
+
+            hand_vertices = pred['vertices'].detach().cpu().numpy()[selected_idx]
+            # blue for object points
+            hand_pc = trimesh.PointCloud(hand_vertices, colors=[0, 0, 255])
+
+            scene = trimesh.Scene([object_pc, hand_pc])
+
+            object_points_in = data['points'][selected_idx][o2h_dist_neg[selected_idx]].cpu().numpy()
+
+            if len(object_points_in) > 0:
+                object_pc_in = trimesh.PointCloud(object_points_in, colors=[0, 255, 255])
+                scene.add_geometry(object_pc_in)
+
+            hand_vertices_in = pred['vertices'][selected_idx][h2o_dist_neg[selected_idx]].detach().cpu().numpy()
+
+            if len(hand_vertices_in) > 0:
+                hand_pc_in = trimesh.PointCloud(hand_vertices_in, colors=[255, 255, 0])
+                scene.add_geometry(hand_pc_in)
+
+            scene.show()
 
         # distant loss , from contactmap_gt(>0.4) to nearest hand vertices
         touched = data['contactmap'] > 0.4
-        line2ver = [1745, 1834, 2004, 2098,
+        line2ver = [1745, 1834, 2004, 2098,       #
                     2156, 2186, 2273, 2323,
                     2359, 2386, 2481, 2538,
                     2573, 2602, 2701, 2758,
                     2796, 2826, 2925, 2965, 3000]
-        # o2f, _, _, _ = point2point_signed(pred['vertices'][:, 1834:, :], data['points'], pred['normals'][:, 1834:, :], data['normals'])
-        # loss_dist = torch.sum(torch.abs(o2f)[touched]) / torch.sum(touched)
+
         loss_dist = 0
         for i in range(20):
+            if i % 4 == 0:
+                continue
             idx = (data['line_idx'] == i) & touched
+
             if torch.sum(idx):
-                o2f, _, _, _ = point2point_signed(pred['vertices'][:, line2ver[i]:line2ver[i+1], :], data['points'],
+                o2f, f2o, _, _ = point2point_signed(pred['vertices'][:, line2ver[i]:line2ver[i+1], :], data['points'],
                                                   pred['normals'][:, line2ver[i]:line2ver[i+1], :], data['normals'])
-                loss_dist += torch.sum(torch.abs(o2f)[idx]) / torch.sum(idx) * self.config.contact_prob[i]
+                loss_dist += torch.sum(torch.abs(o2f)[idx]) / bs * self.config.contact_prob[i]
 
         # self-collision loss
         self_collison_loss = 0
@@ -134,12 +165,28 @@ class backbone_pointnet2(nn.Module):
         n = [n1, n2, n3, n4, n5]
 
         for i in range(5):
-            for j in range(5):
-                if i == j:
-                    continue
-                _, i2j, _, _ = point2point_signed(v[i], v[j], n[i], n[j])
-                dist_neg = i2j < 0.0
-                self_collison_loss += torch.sum(i2j * dist_neg)
+            for j in range(i+1, 5):
+                # print(i, j)
+                j2i_signed, i2j_signed, _, _ = point2point_signed(v[i], v[j], n[i], n[j])
+                j2i_signed_dist_neg = torch.logical_and(j2i_signed.abs() < 0.01, j2i_signed < 0.0)
+                i2j_signed_dist_neg = torch.logical_and(i2j_signed.abs() < 0.01, i2j_signed < 0.0)
+
+                if debug_loss:
+                    selected_idx = np.random.randint(bs)
+                    finger_1 = v[i].detach().cpu().numpy()[selected_idx]
+                    finger_1_pc = trimesh.PointCloud(finger_1, colors=[0, 255, 0])
+                    finger_2 = v[j].detach().cpu().numpy()[selected_idx]
+                    finger_2_pc = trimesh.PointCloud(finger_2, colors=[0, 0, 255])
+                    scene = trimesh.Scene([finger_1_pc, finger_2_pc])
+                    points_in = v[i][selected_idx][i2j_signed_dist_neg[selected_idx]].detach().cpu().numpy()
+                    print(points_in.shape)
+                    if len(points_in) > 0:
+                        points_in_pc = trimesh.PointCloud(points_in, colors=[0, 255, 255])
+                        scene.add_geometry(points_in_pc)
+                    scene.show()
+                self_collison_loss += torch.sum(i2j_signed * i2j_signed_dist_neg) / bs
+                self_collison_loss += torch.sum(j2i_signed * j2i_signed_dist_neg) / bs
+                # print(self_collison_loss)
         # self_collison_loss *= -self.config.loss_weight[2]
 
         # joint loss
@@ -149,35 +196,25 @@ class backbone_pointnet2(nn.Module):
         # exit()
 
         # loss between contactmap_gt and contactmap_pred
-        touched = o2h < 0.005
-        touched_gt = data['contactmap'] > 0.4
-        not_touch = touched ^ touched_gt & touched
-        diff_map_loss = torch.sum(o2h * not_touch)
-
-        # quat_loss
-        def quaternion_loss(y_true, y_pred):
-            dist1 = torch.mean(torch.abs(y_true - y_pred), dim=-1)
-            dist2 = torch.mean(torch.abs(y_true + y_pred), dim=-1)
-            loss = torch.where(dist1 < dist2, dist1, dist2)
-            return torch.mean(loss)
+        touched = o2h_signed.abs() < 0.005
+        # touched_gt = data['contactmap'] > 0.4
+        # not_touch = touched ^ touched_gt & touched
+        repulsion_loss = torch.sum(o2h_signed * touched) / bs
 
         quat_gt = pytorch3d.transforms.matrix_to_quaternion(data['root_mat'])
-        # print('quat_gt', quat_gt)
-        quat_pred = pred['joints'][:, 3:7]
-        quat_pred = quat_pred / torch.linalg.norm(quat_pred)
-        # print('quat_pred', quat_pred)
+        quat_pred = pred['quat']
         quat_loss =  quaternion_loss(quat_gt, quat_pred)
 
         total_loss = -self.config.loss_weight[0] * (loss_collision_h2o + loss_collision_o2h) + \
                      self.config.loss_weight[1] * loss_dist + \
                      -self.config.loss_weight[2] * self_collison_loss + \
                      self.config.loss_weight[3] * joint_angle_loss + \
-                     -self.config.loss_weight[4] * diff_map_loss + \
+                     -self.config.loss_weight[4] * repulsion_loss + \
                      self.config.loss_weight[5] * quat_loss
 
         return dict(total_loss=total_loss, collison_loss=loss_collision_h2o+loss_collision_o2h,
                     dist_loss=loss_dist, self_collison_loss=self_collison_loss, joint_angle_loss=joint_angle_loss,
-                    diff_map_loss=diff_map_loss, quat_loss=quat_loss)
+                    repulsion_loss=repulsion_loss, quat_loss=quat_loss)
 
 
 if __name__ == '__main__':

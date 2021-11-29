@@ -561,7 +561,7 @@ class SvhHandLayer(torch.nn.Module):
         h11_vertices = self.h11.repeat(batch_size, 1, 1)
 
         T_J5 = self.forward_kinematics(self.J5_a, self.J5_alpha,
-                                       self.J5_d, theta[:, 0] + self.J5_theta, batch_size)
+                                       self.J5_d, theta[:, 0]/3 + self.J5_theta, batch_size)
         T_p2_2_w = torch.matmul(torch.matmul(T_p1_2_w, self.p2_2_p1), T_J5)
         h11_vertices = torch.matmul(T_p2_2_w,
                                     h11_vertices.transpose(2, 1)).transpose(1, 2)[:, :, :3]
@@ -1059,13 +1059,13 @@ class SvhHandLayer(torch.nn.Module):
 
 if __name__ == "__main__":
     device = 'cuda'
-    svh = SvhHandLayer(device).to(device)
+    svh = SvhHandLayer(device, show_mesh=True).to(device)
     pose = torch.from_numpy(np.identity(4)).to(device).reshape(-1, 4, 4).float()
     # 0:Thumb Opposition, 1:Thumb Flexion, 2:Index Finger Proximal, 3:Index Finger Distal, 4:Middle Finger Proximal,
     # 5:Middle Finger Distal, 6:Ring Finger, 7:Pinky, 8:Spread
     # theta = torch.ones((1, 9), dtype=torch.float32).to(device) * 0.1
     theta = torch.zeros((1, 9), dtype=torch.float32).to(device)
-    theta[0][0] = 0
+    theta[0][0] = 0.99
     theta[0][2] = 0
     theta[0][8] = 0.18
 
@@ -1075,9 +1075,9 @@ if __name__ == "__main__":
     #     pytorch3d.transforms.euler_angles_to_matrix(torch.tensor([[3.14, -1.57, -0.25]], device='cuda'), 'XYZ'))
     vertices = vertices.detach().cpu()
     normal = normal.detach().cpu()
-    # mesh = svh.get_forward_hand_mesh(pose, theta)
-    # mesh[0].show()
-    # exit()
+    mesh = svh.get_forward_hand_mesh(pose, theta)
+    mesh[0].show()
+    exit()
 
     point_cloud = trimesh.PointCloud(vertices[0], colors=[0, 255, 0])
     color = np.asarray(point_cloud.colors)
@@ -1088,7 +1088,7 @@ if __name__ == "__main__":
     color[2826:3000, :] = [0, 0, 255, 255]
     point_cloud.colors = color
     point_cloud.show()
-    # exit()
+    exit()
 
     v1 = vertices[:, 1834:2156, :]
     v2 = vertices[:, 2186:2359, :]

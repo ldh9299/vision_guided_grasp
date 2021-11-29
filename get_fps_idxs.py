@@ -33,36 +33,26 @@ def fps(points, npoint):
 
 def get_fps_idx(obj_name):
     print(obj_name)
-    filename = 'object_models/{}.ply'.format(obj_name)
+    filename = 'dataset/object_models/{}.ply'.format(obj_name)
     mesh = open3d.open3d.io.read_triangle_mesh(filename)
-    mesh.compute_vertex_normals()
-    open3d.visualization.draw_geometries([mesh])
-    print(np.asarray(mesh.vertex_normals))
-    # exit()
+    # mesh.compute_vertex_normals()
+    # open3d.visualization.draw_geometries([mesh])
     v = np.asarray(mesh.vertices)
-    # mesh = trimesh.load_mesh(filename)
-    # print(v.shape)
+
     idxs = fps(v, 3000)
-    # np.save('dataset/idx_3000/{}.npy'.format(obj_name), idxs)
+    np.save('dataset/idx_3000/{}.npy'.format(obj_name), idxs)
 
 
 if __name__ == "__main__":
-    # filename = '/home/ldh/ContactPose/data/contactpose_data/full29_use/ps_controller/ps_controller.ply'
-    # mesh = trimesh.load_mesh(filename)
-    # print(mesh.vertices.shape)
-    # idxs = fps(mesh.vertices, 3000)
-    # print(max(idxs))
-    # np.save('dataset/idx_3000/{}.npy'.format('ps_controller'), idxs)
-    # exit()
-    # pool = mp.Pool(processes=int(mp.cpu_count()))
-    pool = mp.Pool(processes=1)
+    pool = mp.Pool(processes=16)
 
-    path = "object_models"
+    path = "dataset/object_models"
     for _, dirname, files in os.walk(path):
-        for file in files:
-            obj_name = file[:-4]
-            pool.apply(get_fps_idx, args=(obj_name,))
-            # pool.apply_async(get_fps_idx, args=(obj_name,))
+        for filename in files:
+            if filename.endswith('.ply'):
+                obj_name = filename[:-4]
+                # pool.apply(get_fps_idx, args=(obj_name,))
+                pool.apply_async(get_fps_idx, args=(obj_name,))
 
     pool.close()
     pool.join()
