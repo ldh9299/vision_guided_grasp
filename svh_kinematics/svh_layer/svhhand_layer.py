@@ -511,12 +511,8 @@ class SvhHandLayer(torch.nn.Module):
                 vertex_normals = copy.deepcopy(mesh.vertex_normals)
                 meshes[name] = [
                     torch.cat((torch.FloatTensor(np.array(mesh.vertices[idxs])), temp), dim=-1).to(self.device),
-                    # torch.LongTensor(np.asarray(mesh.faces)).to(self.device),
                     mesh.faces,
-                    # torch.FloatTensor(np.asarray(vert_area_weight)).to(self.device),
-                    # vert_area_weight,
                     torch.cat((torch.FloatTensor(vertex_normals[idxs]), temp), dim=-1).to(self.device).to(torch.float)
-                    # mesh.vertex_normals,
                 ]
         return meshes
 
@@ -999,14 +995,15 @@ class SvhHandLayer(torch.nn.Module):
         outputs = self.forward(pose, theta)
         # s = 0
         # l = []
-        # for i in range(23):
+        # for i in range(1, 23):
         #     s += outputs[i].shape[1]
         #     print(outputs[i].shape[1], s)
         #     l.append(s)
         # np.save('idx_list', l)
         # exit()
 
-        hand_vertices = torch.cat((outputs[0].view(batch_size, -1, 3),
+        hand_vertices = torch.cat((
+            # outputs[0].view(batch_size, -1, 3),
                                    outputs[1].view(batch_size, -1, 3),
                                    outputs[2].view(batch_size, -1, 3),
                                    outputs[3].view(batch_size, -1, 3),
@@ -1030,7 +1027,8 @@ class SvhHandLayer(torch.nn.Module):
                                    outputs[21].view(batch_size, -1, 3),
                                    outputs[22].view(batch_size, -1, 3)), 1)
 
-        hand_vertices_normal = torch.cat((outputs[23].view(batch_size, -1, 3),
+        hand_vertices_normal = torch.cat((
+            # outputs[23].view(batch_size, -1, 3),
                                           outputs[24].view(batch_size, -1, 3),
                                           outputs[25].view(batch_size, -1, 3),
                                           outputs[26].view(batch_size, -1, 3),
@@ -1059,60 +1057,62 @@ class SvhHandLayer(torch.nn.Module):
 
 if __name__ == "__main__":
     device = 'cuda'
-    svh = SvhHandLayer(device, show_mesh=True).to(device)
+    svh = SvhHandLayer(device, show_mesh=False).to(device)
     pose = torch.from_numpy(np.identity(4)).to(device).reshape(-1, 4, 4).float()
     # 0:Thumb Opposition, 1:Thumb Flexion, 2:Index Finger Proximal, 3:Index Finger Distal, 4:Middle Finger Proximal,
     # 5:Middle Finger Distal, 6:Ring Finger, 7:Pinky, 8:Spread
     # theta = torch.ones((1, 9), dtype=torch.float32).to(device) * 0.1
     theta = torch.zeros((1, 9), dtype=torch.float32).to(device)
-    theta[0][0] = 0.99
+    theta[0][0] = 0
     theta[0][2] = 0
-    theta[0][8] = 0.18
+    theta[0][8] = 0.5
 
     vertices, normal = svh.get_forward_vertices(pose, theta)
-    # import pytorch3d.transforms
-    # vertices = vertices.matmul(
-    #     pytorch3d.transforms.euler_angles_to_matrix(torch.tensor([[3.14, -1.57, -0.25]], device='cuda'), 'XYZ'))
+
     vertices = vertices.detach().cpu()
     normal = normal.detach().cpu()
-    mesh = svh.get_forward_hand_mesh(pose, theta)
-    mesh[0].show()
-    exit()
+
+    # idxs = fps(np.asarray(vertices[0]), 3000)
+    # np.save('idxs.npy', idxs)
+    # idxs = np.load('idxs.npy')
+    # mesh = svh.get_forward_hand_mesh(pose, theta)
+    # mesh[0].show()
+    # exit()
 
     point_cloud = trimesh.PointCloud(vertices[0], colors=[0, 255, 0])
-    color = np.asarray(point_cloud.colors)
-    color[1834:2156, :] = [255, 0, 0, 255]
-    color[2186:2359, :] = [125, 125, 0, 255]
-    color[2386:2573, :] = [0, 125, 125, 255]
-    color[2602:2796, :] = [125, 0, 125, 255]
-    color[2826:3000, :] = [0, 0, 255, 255]
-    point_cloud.colors = color
-    point_cloud.show()
-    exit()
+    # color = np.asarray(point_cloud.colors)
+    # color[1834:2156, :] = [255, 0, 0, 255]
+    # color[2186:2359, :] = [125, 125, 0, 255]
+    # color[2386:2573, :] = [0, 125, 125, 255]
+    # color[2602:2796, :] = [125, 0, 125, 255]
+    # color[2826:3000, :] = [0, 0, 255, 255]
+    # point_cloud.colors = color
+    # point_cloud.show()
+    # exit()
 
-    v1 = vertices[:, 1834:2156, :]
-    v2 = vertices[:, 2186:2359, :]
-    v3 = vertices[:, 2386:2573, :]
-    v4 = vertices[:, 2602:2796, :]
-    v5 = vertices[:, 2826:3000, :]
-    v = [v1, v2, v3, v4, v5]
-
-    n1 = normal[:, 1834:2156, :]
-    n2 = normal[:, 2186:2359, :]
-    n3 = normal[:, 2386:2573, :]
-    n4 = normal[:, 2602:2796, :]
-    n5 = normal[:, 2826:3000, :]
-    n = [n1, n2, n3, n4, n5]
-
-    for i in range(5):
-        for j in range(5):
-            if i == j:
-                continue
-            _, i2j, _, _ = point2point_signed(v[i], v[j], n[i], n[j])
-            # print(len(i2j[0]))
-            dist_neg = i2j < 0.0
-            print(sum(sum(dist_neg)))
-    exit()
+    # v1 = vertices[:, 1834:2156, :]
+    # v2 = vertices[:, 2186:2359, :]
+    # v3 = vertices[:, 2386:2573, :]
+    # v4 = vertices[:, 2602:2796, :]
+    # v5 = vertices[:, 2826:3000, :]
+    # v = [v1, v2, v3, v4, v5]
+    #
+    # n1 = normal[:, 1834:2156, :]
+    # n2 = normal[:, 2186:2359, :]
+    # n3 = normal[:, 2386:2573, :]
+    # n4 = normal[:, 2602:2796, :]
+    # n5 = normal[:, 2826:3000, :]
+    # n = [n1, n2, n3, n4, n5]
+    #
+    # for i in range(5):
+    #     for j in range(5):
+    #         if i == j:
+    #             continue
+    #         _, i2j, _, _ = point2point_signed(v[i], v[j], n[i], n[j])
+    #         # print(len(i2j[0]))
+    #         dist_neg = i2j < 0.0
+    #         print(sum(sum(dist_neg)))
+    # exit()
     # idxs = fps(point_cloud.vertices, 3000)
     # np.save('idxs.npy', idxs)
     # idxs = np.load('idxs.npy')
@@ -1136,9 +1136,28 @@ if __name__ == "__main__":
     # vg_mesh.show()
     # exit()
 
-    ray_origins = vertices.squeeze()
-    ray_directions = normal.squeeze()
-    ray_visualize = trimesh.load_path(np.hstack((ray_origins, ray_origins + ray_directions / 100)).reshape(-1, 2, 3))
-    pc = trimesh.PointCloud(ray_origins, colors=[0, 255, 0])
-    scene = trimesh.Scene([pc, ray_visualize])
+    ray_origins_thumb = vertices[0][1322:1857]
+    ray_directions_thumb = normal[0][1322:1857]
+    selected_thumb = torch.logical_and(ray_directions_thumb[:, 0] < -0.3, ray_directions_thumb[:, 1] < 0)
+    temp = torch.where(selected_thumb, torch.tensor(1), torch.tensor(0))
+    temp_list_thumb = (torch.nonzero(temp).squeeze() + 1322).tolist()
+
+    ray_origins_other = vertices[0][1857:]
+    ray_directions_other = normal[0][1857:]
+    selected_other = ray_directions_other[:, 1] < -0.2
+    temp = torch.where(selected_other, torch.tensor(1), torch.tensor(0))
+    temp_list_other = (torch.nonzero(temp).squeeze() + 1857).tolist()
+
+    temp_list = np.asarray(temp_list_thumb + temp_list_other)
+    np.save('../../dataset/only_touch_idxs', temp_list)
+    print(temp_list)
+
+    ray_visualize_thumb = trimesh.load_path(np.hstack((ray_origins_thumb[selected_thumb],
+                                                       ray_origins_thumb[selected_thumb] + ray_directions_thumb[
+                                                           selected_thumb] / 100)).reshape(-1, 2, 3))
+    ray_visualize_other = trimesh.load_path(np.hstack((ray_origins_other[selected_other],
+                                                       ray_origins_other[selected_other] + ray_directions_other[
+                                                           selected_other] / 100)).reshape(-1, 2, 3))
+    # pc = trimesh.PointCloud(ray_origins, colors=[0, 255, 0])
+    scene = trimesh.Scene([point_cloud, ray_visualize_thumb, ray_visualize_other])
     scene.show()

@@ -1,6 +1,7 @@
-loss_weight: [1.5, 0.2, 0.1, 0, 0.3, 10]  # collision, distance, self-collision, joint_angles, repulsion, quat loss weight
-#loss_weight: [3, 30, 0, 0, 1, 5]
-contact_prob: [0.0, 0.2, 0.4, 1.5, 0.0, 0.2, 0.3, 1.5, 0.0, 0.1, 0.3, 1, 0.0, 0.1, 0.3, 0.5, 0.0, 0.1, 0.2, 0.3]
-num_epochs: 500
-milestones: [400, 450]
-gamma: 0.1
+loss_weight: [5.0, 1.0, 0.2, 0, 1.0, 15]  # collision, distance, self-collision, joint_angles, repulsion, quat loss weight
+contact_prob: [0.0, 0.2, 1.0, 1.5, 0.0, 0.2, 0.8, 1.0, 0.0, 0.2, 0.8, 1.0, 0.0, 0.1, 0.3, 0.5, 0.0, 0.1, 0.2, 0.3]
+num_epochs: 3000
+milestones: [2000, 2700]
+gamma: 0.2
+lr: 0.00005
+bs: 32

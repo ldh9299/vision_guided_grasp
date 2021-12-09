@@ -27,16 +27,21 @@ class backbone_pointnet2(nn.Module):
     def __init__(self, config):
         super(backbone_pointnet2, self).__init__()
         self.config = config
+        self.only_touch_idxs = np.load('dataset/only_touch_idxs.npy')
 
-        self.sa1 = PointnetSAModule(mlp=[6, 64, 64, 128], npoint=512, radius=0.025, nsample=64, bn=True)
-        self.sa2 = PointnetSAModule(mlp=[128, 128, 128, 256], npoint=128, radius=0.05, nsample=64, bn=True)
-        self.sa3 = PointnetSAModule(mlp=[256, 256, 256, 512])
+        self.sa1 = PointnetSAModule(mlp=[24, 64, 64, 128], npoint=512, radius=0.025, nsample=64, bn=not True)
+        self.sa2 = PointnetSAModule(mlp=[128, 128, 128, 256], npoint=128, radius=0.05, nsample=64, bn=not True)
+        self.sa3 = PointnetSAModule(mlp=[256, 256, 256, 512], bn=not True)
         # self.sa4 = PointnetSAModule(mlp=[256, 256, 256, 512], npoint=None, radius=None, nsample=None, bn=True)
 
         # fc layer
-        self.fc_translation = nn.Linear(512, 3)
-        self.fc_quat = nn.Linear(512, 4)
-        self.fc_joints = nn.Linear(512, 9)
+        self.fc1 = nn.Linear(512, 256)
+        self.fc2 = nn.Linear(256, 128)
+        self.bn1 = nn.BatchNorm1d(256)
+        self.bn2 = nn.BatchNorm1d(128)
+        self.fc_translation = nn.Linear(128, 3)
+        self.fc_quat = nn.Linear(128, 4)
+        self.fc_joints = nn.Linear(128, 9)
         self.tanh = nn.Tanh()
         self.joints_mean = torch.tensor([0.99 / 2, 0.97 / 2, 0.8 / 2, 1.33 / 2, 0.8 / 2, 1.33 / 2, 0.98 / 2, 0.98 / 2,
                                          0.40 / 2 + 0.18])
@@ -52,6 +57,10 @@ class backbone_pointnet2(nn.Module):
         l2_xyz, l2_points = self.sa2(l1_xyz, l1_points)
         l3_xyz, l3_points = self.sa3(l2_xyz, l2_points)
         feature = l3_points.view(-1, 512)
+        feature = F.leaky_relu(self.bn1(self.fc1(feature)), negative_slope=0.2)
+        # feature = F.leaky_relu(self.fc1(feature), negative_slope=0.2)
+        feature = F.leaky_relu(self.bn2(self.fc2(feature)), negative_slope=0.2)
+        # feature = F.leaky_relu(self.fc2(feature), negative_slope=0.2)
 
         hand_translation = self.fc_translation(feature)
         hand_quat = F.normalize(self.fc_quat(feature))
@@ -130,11 +139,11 @@ class backbone_pointnet2(nn.Module):
 
         # distant loss , from contactmap_gt(>0.4) to nearest hand vertices
         touched = data['contactmap'] > 0.4
-        line2ver = [1745, 1834, 2004, 2098,       #
-                    2156, 2186, 2273, 2323,
-                    2359, 2386, 2481, 2538,
-                    2573, 2602, 2701, 2758,
-                    2796, 2826, 2925, 2965, 3000]
+        line2ver = [0, 16, 63, 80, 98,
+                    110, 143, 160, 178,
+                    190, 233, 255, 277,
+                    289, 340, 364, 384,
+                    393, 438, 455, 477]
 
         loss_dist = 0
         for i in range(20):
@@ -143,25 +152,25 @@ class backbone_pointnet2(nn.Module):
             idx = (data['line_idx'] == i) & touched
 
             if torch.sum(idx):
-                o2f, f2o, _, _ = point2point_signed(pred['vertices'][:, line2ver[i]:line2ver[i+1], :], data['points'],
-                                                  pred['normals'][:, line2ver[i]:line2ver[i+1], :], data['normals'])
+                o2f, f2o, _, _ = point2point_signed(pred['vertices'][:, self.only_touch_idxs[line2ver[i]:line2ver[i+1]], :], data['points'],
+                                                  pred['normals'][:, self.only_touch_idxs[line2ver[i]:line2ver[i+1]], :], data['normals'])
                 loss_dist += torch.sum(torch.abs(o2f)[idx]) / bs * self.config.contact_prob[i]
 
         # self-collision loss
         self_collison_loss = 0
 
-        v1 = pred['vertices'][:, 1834:2156, :]
-        v2 = pred['vertices'][:, 2186:2359, :]
-        v3 = pred['vertices'][:, 2386:2573, :]
-        v4 = pred['vertices'][:, 2602:2796, :]
-        v5 = pred['vertices'][:, 2826:3000, :]
+        v1 = pred['vertices'][:, 1438:1857, :]
+        v2 = pred['vertices'][:, 1905:2135, :]
+        v3 = pred['vertices'][:, 2177:2433, :]
+        v4 = pred['vertices'][:, 2471:2735, :]
+        v5 = pred['vertices'][:, 2780:3000, :]
         v = [v1, v2, v3, v4, v5]
 
-        n1 = pred['normals'][:, 1834:2156, :]
-        n2 = pred['normals'][:, 2186:2359, :]
-        n3 = pred['normals'][:, 2386:2573, :]
-        n4 = pred['normals'][:, 2602:2796, :]
-        n5 = pred['normals'][:, 2826:3000, :]
+        n1 = pred['normals'][:, 1438:1857, :]
+        n2 = pred['normals'][:, 1905:2135, :]
+        n3 = pred['normals'][:, 2177:2433, :]
+        n4 = pred['normals'][:, 2471:2735, :]
+        n5 = pred['normals'][:, 2780:3000, :]
         n = [n1, n2, n3, n4, n5]
 
         for i in range(5):
@@ -203,7 +212,7 @@ class backbone_pointnet2(nn.Module):
 
         quat_gt = pytorch3d.transforms.matrix_to_quaternion(data['root_mat'])
         quat_pred = pred['quat']
-        quat_loss =  quaternion_loss(quat_gt, quat_pred)
+        quat_loss = quaternion_loss(quat_gt, quat_pred)
 
         total_loss = -self.config.loss_weight[0] * (loss_collision_h2o + loss_collision_o2h) + \
                      self.config.loss_weight[1] * loss_dist + \

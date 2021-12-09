@@ -6,6 +6,7 @@ import torch.utils.data as data
 from tqdm import tqdm
 import os
 
+
 def read_object_models(dst_dir):
     object_models_dict = {}
     points_idx_dict = {}
@@ -26,7 +27,7 @@ class Contact_dataset(data.Dataset):
     def __init__(self, debug_vis=False):
         super(Contact_dataset).__init__()
         self.debug_vis = debug_vis
-        self.data = np.load('dataset/object_in_use_all.npy', allow_pickle=True)[:32]
+        self.data = np.load('dataset/object_in_use_all.npy', allow_pickle=True)[0:64]
         dst_dir = 'dataset/object_models'
         self.object_models_dict, self.points_idx_dict = read_object_models(dst_dir)
 
